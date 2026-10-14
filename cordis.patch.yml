@@ -1,0 +1,11 @@
+# dsh-branch-hover bundle patch
+#
+# 单包单插件：装一次，宿主半（/branch-hover/api 路由）与浏览器半
+# （sidebar.session.row.hover 席位）一起到位。
+#
+# 双面包的挂载方式：Loader 只需要一行插件行——宿主半从这个入口加载，
+# 浏览器半由 client-modules 依据 package.json 的 dsh.client 声明自动发现
+# （它扫的是 Loader 的 entries，所以这一行同时是客户端半的入口）。
+- insert:
+    - id: dsh-branch-hover
+      name: 'dsh-branch-hover'
