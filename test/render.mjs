@@ -266,12 +266,21 @@ const MARKET_115 = { code: 'KH000115', name: '宁夏银行股份有限公司', s
   check('非空白会话 → 不发请求', fetchUrls.length, 0);
 }
 
-// 3. 有 cwd 但响应里没有 market：整行不渲染，不留空位。
+// 3a. 是仓库但分支认不出客户编码：不留白，明确写出原因（空白与「插件没生效」无法区分）。
 {
   payload = { isRepo: true, branch: 'master', detached: false };
   const { exports, store } = makeDriver();
   const out = await drive(exports, '__test_MarketDock', dockProps('/repo', true), store);
-  check('无 market → 返回 null', out, null);
+  check('认不出编码 → 占位解释原因', textOf(out), '市场：—（分支名无客户编码）');
+  check('认不出编码 → 占位更淡', out?.props?.style?.opacity, 0.45);
+}
+
+// 3b. 非 git 工作区（用户报过的场景）：同样给占位，而不是静默空白。
+{
+  payload = { isRepo: false };
+  const { exports, store } = makeDriver();
+  const out = await drive(exports, '__test_MarketDock', dockProps('/not-a-repo', true), store);
+  check('非仓库 → 占位写「非 git 工作区」', textOf(out), '市场：—（非 git 工作区）');
 }
 
 // 4. 没有 cwd（会话未绑定工作区）：不渲染，也不该发请求。
@@ -290,14 +299,28 @@ const AT_MS = 1791884393000;
 const AT_BRANCH = 'KH000456-柜面升级改造项目(2.7.1_20171207)';
 const AT_MARKET = { code: 'KH000456', name: '北京农村商业银行股份有限公司', short: '北农商' };
 
-/** TurnBranch 入参：owner 给 TurnLocation 与 seq/openFile，标准件给 sessionId 与 useSessions。 */
-function tailProps(turn, cwd = '/repo') {
+/**
+ * TurnBranch 入参：owner 给 messageId，标准件给 sessionId 与 useSessions，
+ * 本插件注入的 getChat 提供聊天快照（时间锚点从快照里按 messageId 查出来）。
+ * @param {number | undefined} anchorMs - 该轮 turn/start 时刻；undefined 表示时间线里没有。
+ * @param {string} [cwd] - 工作区路径。
+ * @param {boolean} [withStart] - 时间线里是否带 start；false 表示退到消息自身的 time。
+ * @returns {object} 组件入参。
+ */
+function tailProps(anchorMs, cwd = '/repo', withStart = true) {
+  const messageId = 'msg-1';
+  const node = { kind: 'assistant', data: { turn: 1, time: anchorMs ?? 0, finalNode: { messageId } } };
+  const snapshot = {
+    order: ['node-1'],
+    nodes: new Map([['node-1', node]]),
+    timeline: { turns: new Map([[1, withStart && anchorMs !== undefined ? { start: { time: anchorMs } } : {}]]) },
+  };
+  const source = { getSnapshot: () => snapshot, subscribe: () => () => {} };
   return {
     sessionId: 's1',
     useSessions: (selector) => selector({ byId: { s1: { cwd } } }),
-    turn,
-    seq: 42,
-    openFile: () => {},
+    messageId,
+    getChat: () => ({ binding: () => ({ target: () => source }) }),
   };
 }
 
@@ -309,7 +332,7 @@ function tailProps(turn, cwd = '/repo') {
     at: { time: AT_MS, branch: AT_BRANCH, detached: false, exact: true, market: AT_MARKET },
   };
   const { exports, store } = makeDriver();
-  const out = await drive(exports, '__test_TurnBranch', tailProps({ start: { time: AT_MS } }), store);
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
   check('at 有市场 → ⎇分支 · 简称', textOf(out), `⎇${AT_BRANCH} · 北农商`);
   // titlesOf 返回的是 title 数组，这里 title 由分支名与市场全称拼成，故用 substring 判。
   check('市场全称进 title 提示', titlesOf(out).some((t) => t.includes('KH000456 北京农村商业银行股份有限公司')), true);
@@ -322,41 +345,74 @@ function tailProps(turn, cwd = '/repo') {
     at: { time: AT_MS, branch: AT_BRANCH, detached: false, exact: false, market: AT_MARKET },
   };
   const { exports, store } = makeDriver();
-  const out = await drive(exports, '__test_TurnBranch', tailProps({ start: { time: AT_MS } }), store);
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
   check('exact=false → title 含「推断」', titlesOf(out).some((t) => t.includes('推断')), true);
   check('exact=false → 正文不变', textOf(out), `⎇${AT_BRANCH} · 北农商`);
 }
 
-// 3. 响应里没有 at 块（非仓库或宿主给不出该时刻）：整条不渲染。
+// 3a. 是仓库但该时刻的分支查不到：不留白，写明是哪一种情况。
 {
   atPayload = { isRepo: true, branch: 'master' };
   const { exports, store } = makeDriver();
-  const out = await drive(exports, '__test_TurnBranch', tailProps({ start: { time: AT_MS } }), store);
-  check('响应无 at 块 → 返回 null', out, null);
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
+  check('无 at 块（仓库）→ 占位写查不到分支', textOf(out), '⎇—（该时刻查不到分支）');
+  check('无 at 块 → 占位更淡', out?.props?.style?.opacity, 0.4);
 }
 
-// 4. 没有时间锚点：不渲染，也不该发请求。
+// 3b. 非 git 工作区（用户报过的场景）：同样给占位。
 {
+  atPayload = { isRepo: false };
   const { exports, store } = makeDriver();
-  const out = await drive(exports, '__test_TurnBranch', tailProps({ status: 'unknown' }), store);
-  check('无 turn.start/end.time → 返回 null', out, null);
-  check('无锚点 → 不发请求', fetchUrls.length, 0);
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
+  check('非仓库 → 占位写「非 git 工作区」', textOf(out), '⎇—（非 git 工作区）');
 }
 
-// 5. 缺 start 的残缺轮：退到 turn.end.time 作锚点。
+// 4. 拿不到聊天快照（服务不可用）：不留白——用实时概况顶上，并明确标注「（当前）」。
+{
+  payload = { isRepo: true, branch: 'KH000115-无纸化信创(2.3_20160627)', detached: false, market: MARKET_115 };
+  atPayload = { isRepo: false };
+  const { exports, store } = makeDriver();
+  const props = { ...tailProps(AT_MS), getChat: () => undefined };
+  const out = await drive(exports, '__test_TurnBranch', props, store);
+  check('无聊天快照 → 实时兜底并标「（当前）」', textOf(out), '⎇KH000115-无纸化信创(2.3_20160627) · 宁夏银行（当前）');
+  check('兜底来源写进 data-bh-source', out?.props?.['data-bh-source'], 'live');
+  check('兜底走实时概况（不带 at=）', fetchUrls[0]?.includes('at='), false);
+  check('兜底 title 说明为什么没有定格值', titlesOf(out).some((t) => t.includes('会话快照不可用')), true);
+}
+
+// 4b. 快照就绪但里面没有这条消息（例如流式中/被裁剪）：同样退到实时兜底。
+{
+  payload = { isRepo: true, branch: 'master', detached: false };
+  atPayload = { isRepo: false };
+  const { exports, store } = makeDriver();
+  const props = { ...tailProps(AT_MS), messageId: 'msg-other' };
+  const out = await drive(exports, '__test_TurnBranch', props, store);
+  check('消息不在快照里 → 退到实时兜底', out?.props?.['data-bh-source'], 'live');
+  check('消息不在快照里 → title 说明原因', titlesOf(out).some((t) => t.includes('快照里查不到这条消息')), true);
+}
+
+// 5. 时间线里没有 turn/start：退到该消息自身的 time 作锚点。
 {
   atPayload = { isRepo: true, branch: 'master', at: { time: AT_MS, branch: 'main', detached: false, exact: true } };
   const { exports, store } = makeDriver();
-  const out = await drive(exports, '__test_TurnBranch', tailProps({ end: { time: AT_MS } }), store);
-  check('缺 start → 用 end.time 作锚点', textOf(out), '⎇main');
-  check('锚点值等于 end.time', fetchUrls[0]?.includes(`at=${AT_MS}`), true);
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS, '/repo', false), store);
+  check('无 turn/start → 用消息自身 time 作锚点', textOf(out), '⎇main');
+  check('锚点值等于消息 time', fetchUrls[0]?.includes(`at=${AT_MS}`), true);
+}
+
+// 5b. 位置：本元素必须带 CSS order，才能排到「用量/时间」右边。
+{
+  atPayload = { isRepo: true, branch: 'master', at: { time: AT_MS, branch: 'main', detached: false, exact: true } };
+  const { exports, store } = makeDriver();
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
+  check('行内 order 排在统计之后', out?.props?.style?.order, 9);
 }
 
 // 6. 游离头指针：图标换成 ⑂；没有市场时不出现分隔符。
 {
   atPayload = { isRepo: true, branch: 'master', at: { time: AT_MS, branch: 'c106520', detached: true, exact: true } };
   const { exports, store } = makeDriver();
-  const out = await drive(exports, '__test_TurnBranch', tailProps({ start: { time: AT_MS } }), store);
+  const out = await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
   check('detached 且无市场 → ⑂c106520', textOf(out), '⑂c106520');
 }
 
@@ -367,7 +423,7 @@ function tailProps(turn, cwd = '/repo') {
     at: { time: AT_MS, branch: AT_BRANCH, detached: false, exact: true, market: AT_MARKET },
   };
   const { exports, store } = makeDriver();
-  const props = tailProps({ start: { time: AT_MS } });
+  const props = tailProps(AT_MS);
   const first = await drive(exports, '__test_TurnBranch', props, store);
   const second = await drive(exports, '__test_TurnBranch', props, store);
   check('同一 (cwd, at) 渲染两次 → 只请求一次', fetchUrls.length, 1);
@@ -381,7 +437,7 @@ function tailProps(turn, cwd = '/repo') {
     at: { time: AT_MS, branch: AT_BRANCH, detached: false, exact: true, market: AT_MARKET },
   };
   const { exports, store } = makeDriver();
-  await drive(exports, '__test_TurnBranch', tailProps({ start: { time: AT_MS } }), store);
+  await drive(exports, '__test_TurnBranch', tailProps(AT_MS), store);
   check('URL 带 at= 且等于 start.time', fetchUrls[0]?.includes(`at=${AT_MS}`), true);
   check('URL 带 cwd=', fetchUrls[0]?.includes(`cwd=${encodeURIComponent('/repo')}`), true);
 }
