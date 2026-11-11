@@ -248,14 +248,24 @@ function dockProps(cwd, blank) {
 
 const MARKET_115 = { code: 'KH000115', name: '宁夏银行股份有限公司', short: '宁夏银行' };
 
-// 1. 空白会话 + 认得出客户编码：一条居中、低不透明度的「市场：<简称>」，全称进 title。
+// 1. 空白会话 + 认得出市场：分支名与市场名同一行，市场全称进 title。
 {
   atPayload = { isRepo: false };
   payload = { isRepo: true, branch: 'KH000115-无纸化信创(2.3_20160627)', detached: false, market: MARKET_115 };
   const { exports, store } = makeDriver();
   const out = await drive(exports, '__test_MarketDock', dockProps('/repo', true), store);
-  check('空白会话 + 有市场 → 市场：宁夏银行', textOf(out), '市场：宁夏银行');
-  check('市场全称进 title 提示', titlesOf(out).includes('KH000115 宁夏银行股份有限公司'), true);
+  check('分支 + 市场同一行', textOf(out), '⎇ KH000115-无纸化信创(2.3_20160627) · 市场：宁夏银行');
+  check('市场全称进 title 提示', titlesOf(out).some((t) => t.includes('KH000115 宁夏银行股份有限公司')), true);
+  check('有分支时不做淡化', out?.props?.style?.opacity, 1);
+}
+
+// 1b. 游离头指针：分支前用 ⑂，title 标注 detached HEAD。
+{
+  payload = { isRepo: true, branch: 'c106520', detached: true };
+  const { exports, store } = makeDriver();
+  const out = await drive(exports, '__test_MarketDock', dockProps('/repo', true), store);
+  check('detached → ⑂ 前缀', textOf(out), '⑂ c106520 · 市场：—（分支名无客户编码）');
+  check('detached → title 标注', titlesOf(out).some((t) => t.includes('detached HEAD')), true);
 }
 
 // 2. 非空白会话：普通会话里不出现这一行，连取数都不该发生。
@@ -271,8 +281,7 @@ const MARKET_115 = { code: 'KH000115', name: '宁夏银行股份有限公司', s
   payload = { isRepo: true, branch: 'master', detached: false };
   const { exports, store } = makeDriver();
   const out = await drive(exports, '__test_MarketDock', dockProps('/repo', true), store);
-  check('认不出编码 → 占位解释原因', textOf(out), '市场：—（分支名无客户编码）');
-  check('认不出编码 → 占位更淡', out?.props?.style?.opacity, 0.45);
+  check('认不出编码 → 分支照显、市场解释原因', textOf(out), '⎇ master · 市场：—（分支名无客户编码）');
 }
 
 // 3b. 非 git 工作区（用户报过的场景）：同样给占位，而不是静默空白。

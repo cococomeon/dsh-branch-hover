@@ -312,14 +312,56 @@ const dockStyles = {
  * @returns {{text: string, title: string, muted: boolean}} 展示内容。
  */
 function marketDockView(summary) {
-  const market = summary === null || summary === undefined ? undefined : summary.market;
-  if (market !== undefined && market !== null && typeof market.short === 'string' && market.short !== '') {
-    return { text: `市场：${market.short}`, title: `${market.code} ${market.name}`, muted: false };
+  if (summary === null || summary === undefined) return null;
+  const branch = typeof summary.branch === 'string' ? summary.branch.trim() : '';
+  const detached = summary.detached === true;
+  const market = summary.market;
+  const hasMarket = market !== undefined && market !== null
+    && typeof market.short === 'string' && market.short !== '';
+
+  // 非 git 工作区：没有分支可言，只解释一次（不要"市场：—（非 git 工作区） · 分支：—（非 git 工作区）"）。
+  if (branch === '') {
+    const why = summary.isRepo === true ? '拿不到当前分支' : '非 git 工作区';
+    return { branch: null, glyph: '⎇', market: `市场：—（${why}）`, title: why, muted: true };
   }
-  const reason = summary !== null && summary !== undefined && summary.isRepo === true
-    ? '分支名无客户编码'
-    : '非 git 工作区';
-  return { text: `市场：—（${reason}）`, title: reason, muted: true };
+
+  const title = [detached ? `${branch} (detached HEAD)` : branch];
+  if (hasMarket) title.push(`${market.code} ${market.name}`);
+  return {
+    branch,
+    glyph: detached ? '⑂' : '⎇',
+    // 分支名可达 40 个字符，市场名短而关键：两段分开渲染，压缩时先截分支、保住市场。
+    market: hasMarket ? `市场：${market.short}` : '市场：—（分支名无客户编码）',
+    title: title.join(' · '),
+    muted: false,
+  };
+}
+
+/** 把 view 拼成单行文本（无 DOM 环境与 title 用）。 */
+function marketDockText(view) {
+  if (view === null) return '';
+  return view.branch === null ? view.market : `${view.glyph} ${view.branch} · ${view.market}`;
+}
+
+/**
+ * 把 view 变成两个 span（分支 / 市场），分支那段可收缩并省略。
+ * @param {Document} doc - 文档对象。
+ * @param {{branch: string | null, glyph: string, market: string}} view - 展示内容。
+ * @returns {Element[]} 待插入的子节点。
+ */
+function dockChildNodes(doc, view) {
+  const marketSpan = doc.createElement('span');
+  marketSpan.textContent = view.market;
+  marketSpan.style.cssText = 'flex:0 0 auto';
+  if (view.branch === null) return [marketSpan];
+
+  const branchSpan = doc.createElement('span');
+  branchSpan.textContent = `${view.glyph} ${view.branch}`;
+  branchSpan.style.cssText = 'flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  const sep = doc.createElement('span');
+  sep.textContent = '·';
+  sep.style.cssText = 'flex:0 0 auto;opacity:.6';
+  return [branchSpan, sep, marketSpan];
 }
 
 /**
@@ -360,6 +402,7 @@ function MarketDock({ sessionId, useSessions, session }) {
     if (host === null) return undefined;
 
     const view = marketDockView(summary);
+    if (view === null) return undefined;
     let node = doc.getElementById(INLINE_DOCK_ID);
     if (node === null) {
       node = doc.createElement('span');
@@ -368,8 +411,9 @@ function MarketDock({ sessionId, useSessions, session }) {
     node.style.cssText = '';
     Object.assign(node.style, view.muted ? dockStyles.muted : dockStyles.entry);
     node.title = view.title;
-    node.textContent = view.text;
     node.setAttribute('data-bh-source', 'inline');
+    // 两段分开渲染：分支名可能很长（含括号版本号），压缩时先截它，市场名保持完整。
+    node.replaceChildren(...dockChildNodes(doc, view));
 
     // 那一行右侧的 heroOptions 带 `margin-left: auto`，会把分支 chip 顶到行尾，
     // 于是「工作区 · 模式 · 市场 · 分支」凑不到一起。把它改成 0，四个元素就自然靠左紧挨。
@@ -403,10 +447,11 @@ function MarketDock({ sessionId, useSessions, session }) {
   // 无 DOM（测试/SSR）：退回纯文本渲染，让取数逻辑仍可被断言。
   if (!blank || summary === null) return null;
   const view = marketDockView(summary);
+  if (view === null) return null;
   return React.createElement(
     'div',
     { style: view.muted ? dockStyles.muted : dockStyles.entry, title: view.title },
-    view.text,
+    marketDockText(view),
   );
 }
 
